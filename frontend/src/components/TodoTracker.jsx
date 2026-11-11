@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Plus, Check, Trash2, Calendar, Tag, AlertCircle, CheckCircle2 } from 'lucide-react';
+import useSupabaseUserData from '../useSupabaseUserData';
+import { getUserStorageKey, isLegacyOwner } from '../userStorage';
 
 const DEFAULT_TODOS = [
   { id: 1, text: "Revise Python execution model & bytecode", category: "Study", priority: "P0", done: true, due: "Today" },
@@ -9,21 +11,26 @@ const DEFAULT_TODOS = [
   { id: 5, text: "Drink 3L of water and complete 30m yoga", category: "Habit", priority: "P2", done: false, due: "Daily" }
 ];
 
-export default function TodoTracker() {
-  const [todos, setTodos] = useState(() => {
-    const saved = localStorage.getItem('study_todos_list');
-    return saved ? JSON.parse(saved) : DEFAULT_TODOS;
-  });
+export default function TodoTracker({ userId, userEmail }) {
+  const legacyKeys = [
+    getUserStorageKey(userId, 'todos'),
+    ...(isLegacyOwner(userEmail) ? ['study_todos_list'] : [])
+  ];
+  const todosStore = useSupabaseUserData(
+    userId,
+    userEmail,
+    'todos',
+    isLegacyOwner(userEmail) ? DEFAULT_TODOS : [],
+    legacyKeys
+  );
+  const todos = todosStore.data || [];
+  const setTodos = todosStore.setData;
 
   const [text, setText] = useState('');
   const [category, setCategory] = useState('Study');
   const [priority, setPriority] = useState('P0');
   const [due, setDue] = useState('Today');
   const [filter, setFilter] = useState('all');
-
-  useEffect(() => {
-    localStorage.setItem('study_todos_list', JSON.stringify(todos));
-  }, [todos]);
 
   const handleAdd = (e) => {
     e.preventDefault();
@@ -58,8 +65,20 @@ export default function TodoTracker() {
 
   const completedCount = todos.filter(t => t.done).length;
 
+  if (todosStore.loading) {
+    return <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading your tasks...</div>;
+  }
+
   return (
     <div className="space-y-6">
+      {todosStore.error && (
+        <div role="alert" className="flex flex-col gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between">
+          {todosStore.error}
+          <button type="button" onClick={todosStore.reload} className="self-start rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-800 sm:self-auto">
+            Retry
+          </button>
+        </div>
+      )}
       {/* HEADER */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>

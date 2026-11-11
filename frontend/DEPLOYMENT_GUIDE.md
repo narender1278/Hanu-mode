@@ -45,10 +45,21 @@ Vercel is the most popular hosting platform for React and Supabase apps.
 3. Import your GitHub repository.
 4. Set **Root Directory** to `frontend`.
 5. Under **Environment Variables**, add:
-   - `VITE_GEMINI_API_KEY`: *(your Gemini key)*
-   - `VITE_SUPABASE_URL`: *(your Supabase URL)*
-   - `VITE_SUPABASE_ANON_KEY`: *(your Supabase anon key)*
+   - `NEXT_PUBLIC_SUPABASE_URL`: *(your Supabase URL)*
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: *(your Supabase publishable key)*
 6. Click **Deploy**. In ~30 seconds, you get a free `https://<your-app>.vercel.app` link.
+
+### Private expense tracker setup
+
+Run `supabase_expenses_schema.sql` in the Supabase SQL Editor to create the expense table and enable per-user row-level security. Each signed-in account can only read and change its own rows. Other accounts start with an empty tracker and can add their own categories.
+
+If you are migrating the original tracker for `kattanarender167@gmail.com`, run the local, Git-ignored `supabase_expenses_seed.private.sql` once after creating that account and running the schema. Do not commit or share the private seed file.
+
+### Synchronized habits, todos, roadmaps, and study progress
+
+Run `supabase_user_data_schema.sql` in the Supabase SQL Editor. It creates a private per-user JSON data table with row-level security and enables Realtime updates. Habits, habit checks, todos, imported roadmaps, the selected roadmap, study progress, and generated notes then sync through Supabase across devices signed into the same account. Existing browser-only values are migrated to Supabase on the original account's next sign-in; other users start with their own data.
+
+Do not put a private Gemini API key in a `VITE_` or `NEXT_PUBLIC_` frontend variable; those values are visible to website visitors. Use a server-side function for Gemini requests.
 
 ---
 

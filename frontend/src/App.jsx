@@ -9,7 +9,6 @@ import {
   RotateCw, 
   Search, 
   Sparkles, 
-  User, 
   Database,
   Award,
   AlertCircle,
@@ -30,6 +29,9 @@ import { NEETCODE_TOPICS } from './curriculumNeetcode';
 import HabitTracker from './components/HabitTracker';
 import TodoTracker from './components/TodoTracker';
 import ExpensesView from './components/ExpensesView';
+import AuthPage from './AuthPage';
+import useSupabaseUserData from './useSupabaseUserData';
+import { getUserStorageKey, isLegacyOwner, readLegacyUserData } from './userStorage';
 
 // Pre-packaged Roadmaps
 const INITIAL_ROADMAPS = {
@@ -38,16 +40,32 @@ const INITIAL_ROADMAPS = {
   'neetcode': { id: 'neetcode', name: '💻 NeetCode 150 / DSA', topics: NEETCODE_TOPICS },
 };
 
-export default function App() {
+function StudyApp({ user, onSignOut, signOutError }) {
   // Top Navigation View: 'roadmaps' | 'habits' | 'todos' | 'expenses'
   const [activeTab, setActiveTab] = useState('roadmaps');
 
-  // Roadmaps state
-  const [customRoadmaps, setCustomRoadmaps] = useState(() => {
-    const saved = localStorage.getItem('custom_roadmaps');
-    return saved ? JSON.parse(saved) : {};
-  });
-  const [activeRoadmapId, setActiveRoadmapId] = useState('fullstack');
+  const migrationKeys = (key, unscopedKeys = []) => [
+    getUserStorageKey(user.id, key),
+    ...(isLegacyOwner(user.email) ? unscopedKeys : [])
+  ];
+  const customRoadmapsStore = useSupabaseUserData(
+    user.id,
+    user.email,
+    'custom_roadmaps',
+    {},
+    migrationKeys('custom_roadmaps', ['custom_roadmaps'])
+  );
+  const activeRoadmapStore = useSupabaseUserData(
+    user.id,
+    user.email,
+    'active_roadmap_id',
+    'fullstack',
+    migrationKeys('active_roadmap_id')
+  );
+  const customRoadmaps = customRoadmapsStore.data || {};
+  const setCustomRoadmaps = customRoadmapsStore.setData;
+  const activeRoadmapId = activeRoadmapStore.data || 'fullstack';
+  const setActiveRoadmapId = activeRoadmapStore.setData;
 
   // Import Modal state
   const [showImportModal, setShowImportModal] = useState(false);
@@ -64,12 +82,19 @@ export default function App() {
 
   const topics = currentRoadmap.topics || [];
 
-  // User Profile
-  const [currentUser, setCurrentUser] = useState(() => {
-    return localStorage.getItem('study_user') || 'Narender';
-  });
-  const [usersList, setUsersList] = useState(['Narender', 'Friend 1', 'Friend 2']);
-  const [progressMap, setProgressMap] = useState({});
+  const currentUser = user.id;
+  const progressStore = useSupabaseUserData(
+    user.id,
+    user.email,
+    `progress_${activeRoadmapId}`,
+    {},
+    migrationKeys(
+      `study_progress_${activeRoadmapId}`,
+      [`study_progress_${activeRoadmapId}_Narender`]
+    )
+  );
+  const progressMap = progressStore.data || {};
+  const setProgressMap = progressStore.setData;
 
   // Filters
   const [search, setSearch] = useState('');
@@ -114,34 +139,13 @@ export default function App() {
     return counts;
   }, [topics]);
 
-  // Load progress
   useEffect(() => {
-    localStorage.setItem('study_user', currentUser);
-    const saved = localStorage.getItem(`study_progress_${activeRoadmapId}_${currentUser}`);
-    if (saved) {
-      try { setProgressMap(JSON.parse(saved)); } catch (e) { setProgressMap({}); }
-    } else {
-      setProgressMap({});
-    }
     setSectionFilter('all');
     setVisibleCount(30);
-  }, [currentUser, activeRoadmapId]);
+  }, [activeRoadmapId]);
 
   const saveLocalProgress = (newMap) => {
     setProgressMap(newMap);
-    localStorage.setItem(`study_progress_${activeRoadmapId}_${currentUser}`, JSON.stringify(newMap));
-  };
-
-  // Add friend
-  const handleAddFriend = () => {
-    const name = prompt("Enter your friend's name (e.g. Rahul, Priya):");
-    if (name && name.trim()) {
-      const clean = name.trim();
-      if (!usersList.includes(clean)) {
-        setUsersList([...usersList, clean]);
-      }
-      setCurrentUser(clean);
-    }
   };
 
   // Import custom Google Sheet Roadmap
@@ -197,7 +201,6 @@ export default function App() {
       };
 
       setCustomRoadmaps(updated);
-      localStorage.setItem('custom_roadmaps', JSON.stringify(updated));
       setActiveRoadmapId(newId);
       setShowImportModal(false);
       setImportSheetUrl('');
@@ -213,20 +216,54 @@ export default function App() {
   // Open Notes
   const handleOpenNotes = async (topic) => {
     setActiveNotesTopic(topic);
-    const cached = topic.notes_markdown || localStorage.getItem(`study_notes_${topic.id}`);
-    if (cached) {
-      setNotesContent(cached);
-      return;
-    }
-
-    setGeneratingNotes(true);
-    setNotesContent('');
     try {
+      let cached = topic.notes_markdown || '';
+      if (!cached) {
+        const { data, error } = await supabase
+          .from('user_app_data')
+          .select('payload')
+          .eq('user_id', user.id)
+          .eq('data_key', `notes_${topic.id}`)
+          .maybeSingle();
+        if (error) throw error;
+        cached = data?.payload || '';
+      }
+
+      if (!cached) {
+        const legacyKeys = [
+          getUserStorageKey(user.id, `study_notes_${topic.id}`),
+          ...(isLegacyOwner(user.email) ? [`study_notes_${topic.id}`] : [])
+        ];
+        const legacy = readLegacyUserData(legacyKeys);
+        if (legacy.found) {
+          cached = legacy.value;
+          const { error } = await supabase.from('user_app_data').upsert({
+            user_id: user.id,
+            data_key: `notes_${topic.id}`,
+            payload: cached
+          }, { onConflict: 'user_id,data_key' });
+          if (error) throw error;
+          localStorage.removeItem(legacy.sourceKey);
+        }
+      }
+
+      if (cached) {
+        setNotesContent(cached);
+        return;
+      }
+
+      setGeneratingNotes(true);
+      setNotesContent('');
       const generated = await generateStudyNotes(topic);
       setNotesContent(generated);
-      localStorage.setItem(`study_notes_${topic.id}`, generated);
+      const { error } = await supabase.from('user_app_data').upsert({
+        user_id: user.id,
+        data_key: `notes_${topic.id}`,
+        payload: generated
+      }, { onConflict: 'user_id,data_key' });
+      if (error) throw error;
     } catch (err) {
-      alert('Error generating notes: ' + err.message);
+      alert('Error loading or saving notes: ' + err.message);
     } finally {
       setGeneratingNotes(false);
     }
@@ -342,6 +379,19 @@ export default function App() {
   // Calculate metrics
   const masteredCount = Object.values(progressMap).filter(p => p.status === 'Can explain').length;
   const dueCount = Object.values(progressMap).filter(p => p.status === 'Can explain' && p.next_revision && p.next_revision <= todayStr).length;
+  const dataErrors = [
+    customRoadmapsStore.error,
+    activeRoadmapStore.error,
+    progressStore.error
+  ].filter(Boolean);
+
+  if (customRoadmapsStore.loading || activeRoadmapStore.loading || progressStore.loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm text-slate-500">
+        Loading your study data from Supabase...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
@@ -360,27 +410,24 @@ export default function App() {
 
           {/* Right controls */}
           <div className="flex items-center gap-3">
-            {/* User selector */}
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-1">
-              <User className="w-4 h-4 text-slate-500 ml-2" />
-              <select 
-                value={currentUser} 
-                onChange={(e) => setCurrentUser(e.target.value)}
-                className="bg-transparent text-sm font-semibold text-slate-700 outline-none pr-2 cursor-pointer"
+            <div className="flex items-center gap-2 border-l border-slate-200 pl-2 sm:gap-3 sm:pl-3">
+              <span className="hidden max-w-40 truncate text-xs text-slate-500 sm:inline" title={user.email}>
+                {user.email}
+              </span>
+              <button
+                onClick={onSignOut}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
               >
-                {usersList.map(u => (
-                  <option key={u} value={u}>{u}</option>
-                ))}
-              </select>
-              <button 
-                onClick={handleAddFriend}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-2.5 py-1 rounded-md transition"
-              >
-                + Add
+                Sign out
               </button>
             </div>
           </div>
         </div>
+        {signOutError && (
+          <div role="alert" className="mx-auto max-w-7xl px-4 pb-2 text-xs text-rose-600 sm:px-6 lg:px-8">
+            Could not sign out: {signOutError}
+          </div>
+        )}
 
         {/* PRIMARY VIEW NAVIGATION TABS */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-1 overflow-x-auto border-t border-slate-100 text-xs font-semibold">
@@ -436,6 +483,25 @@ export default function App() {
 
       {/* MAIN CONTENT AREA */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {dataErrors.length > 0 && (
+          <div role="alert" className="mb-5 flex flex-col gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <ul className="list-inside list-disc">
+              {dataErrors.map((error) => <li key={error}>{error}</li>)}
+            </ul>
+            <p className="text-xs">Check that you have run supabase_user_data_schema.sql in the Supabase SQL Editor, then reload the affected data.</p>
+            <button
+              type="button"
+              onClick={() => {
+                customRoadmapsStore.reload();
+                activeRoadmapStore.reload();
+                progressStore.reload();
+              }}
+              className="self-start rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-800"
+            >
+              Retry loading
+            </button>
+          </div>
+        )}
 
         {/* VIEW 1: ROADMAPS */}
         {activeTab === 'roadmaps' && (
@@ -655,17 +721,17 @@ export default function App() {
 
         {/* VIEW 2: DAILY HABIT TRACKER */}
         {activeTab === 'habits' && (
-          <HabitTracker />
+          <HabitTracker userId={user.id} userEmail={user.email} />
         )}
 
         {/* VIEW 3: TO-DO TRACKER */}
         {activeTab === 'todos' && (
-          <TodoTracker />
+          <TodoTracker userId={user.id} userEmail={user.email} />
         )}
 
         {/* VIEW 4: MONTHLY EXPENSES */}
         {activeTab === 'expenses' && (
-          <ExpensesView />
+          <ExpensesView key={user.id} userId={user.id} />
         )}
 
       </main>
@@ -849,6 +915,7 @@ export default function App() {
                           </code>
                         );
                       }
+
                       return (
                         <div className="my-4 rounded-xl overflow-hidden border border-slate-800 shadow-md">
                           <div className="bg-slate-800 px-4 py-1.5 flex justify-between items-center text-xs text-slate-300 font-mono">
@@ -1007,5 +1074,76 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [signOutError, setSignOutError] = useState('');
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (active) {
+        setSession(nextSession);
+        setAuthError('');
+        setSignOutError('');
+      }
+    });
+
+    supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) setAuthError(error.message);
+        setSession(data.session);
+        setAuthLoading(false);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAuthError(error.message || 'Could not load your sign-in session.');
+        setAuthLoading(false);
+      });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) setSignOutError(error.message);
+    } catch (error) {
+      setSignOutError(error.message || 'An unexpected error occurred.');
+    }
+  };
+
+  if (!isSupabaseConfigured) return <AuthPage />;
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-sm text-slate-300">
+        Loading your account...
+      </div>
+    );
+  }
+
+  if (!session) return <AuthPage initialError={authError} />;
+
+  return (
+    <StudyApp
+      key={session.user.id}
+      user={session.user}
+      onSignOut={handleSignOut}
+      signOutError={signOutError}
+    />
   );
 }

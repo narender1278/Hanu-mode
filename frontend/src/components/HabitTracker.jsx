@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Plus, Trash2, Check, Flame, Calendar, Award } from 'lucide-react';
+import useSupabaseUserData from '../useSupabaseUserData';
+import { getUserStorageKey, isLegacyOwner } from '../userStorage';
 
 const DEFAULT_HABITS = [
   "Do 30 min yoga",
@@ -12,7 +14,7 @@ const DEFAULT_HABITS = [
   "Sleep before 11:30 PM"
 ];
 
-export default function HabitTracker() {
+export default function HabitTracker({ userId, userEmail }) {
   const today = new Date();
   const currentDay = today.getDate(); // 1 - 31
   const daysInMonth = 31; // Days 1 to 31 as in spreadsheet
@@ -25,36 +27,34 @@ export default function HabitTracker() {
   ];
   const currentMonthName = monthNames[today.getMonth()] + " " + today.getFullYear();
 
-  // Load habits list
-  const [habits, setHabits] = useState(() => {
-    const saved = localStorage.getItem('study_habits_list');
-    return saved ? JSON.parse(saved) : DEFAULT_HABITS;
-  });
-
-  // Load grid state: { [habitIdx]: { [day]: boolean } }
-  const [grid, setGrid] = useState(() => {
-    const saved = localStorage.getItem('study_habits_grid');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
-    }
-    // Initialize default checks
-    const initial = {};
-    DEFAULT_HABITS.forEach((_, hIdx) => {
-      initial[hIdx] = {};
-    });
-    return initial;
-  });
+  const migrationKeys = (key, unscopedKey) => [
+    getUserStorageKey(userId, key),
+    ...(isLegacyOwner(userEmail) ? [unscopedKey] : [])
+  ];
+  const habitsStore = useSupabaseUserData(
+    userId,
+    userEmail,
+    'habits_list',
+    isLegacyOwner(userEmail) ? DEFAULT_HABITS : [],
+    migrationKeys('habits_list', 'study_habits_list')
+  );
+  const gridStore = useSupabaseUserData(
+    userId,
+    userEmail,
+    'habits_grid',
+    {},
+    migrationKeys('habits_grid', 'study_habits_grid')
+  );
+  const habits = habitsStore.data || [];
+  const setHabits = habitsStore.setData;
+  const grid = gridStore.data || {};
+  const setGrid = gridStore.setData;
 
   const [newHabitText, setNewHabitText] = useState('');
 
-  // Save changes
-  useEffect(() => {
-    localStorage.setItem('study_habits_list', JSON.stringify(habits));
-  }, [habits]);
-
-  useEffect(() => {
-    localStorage.setItem('study_habits_grid', JSON.stringify(grid));
-  }, [grid]);
+  if (habitsStore.loading || gridStore.loading) {
+    return <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Loading your habits...</div>;
+  }
 
   // Toggle habit for a day
   const toggleCheck = (hIdx, day) => {
@@ -127,6 +127,14 @@ export default function HabitTracker() {
 
   return (
     <div className="space-y-6">
+      {(habitsStore.error || gridStore.error) && (
+        <div role="alert" className="flex flex-col gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between">
+          <span>{habitsStore.error || gridStore.error}</span>
+          <button type="button" onClick={() => { habitsStore.reload(); gridStore.reload(); }} className="self-start rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-800 sm:self-auto">
+            Retry
+          </button>
+        </div>
+      )}
       {/* HEADER & CONTROLS */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
