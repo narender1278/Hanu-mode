@@ -73,7 +73,7 @@ export default function PortfolioPage({ onGoToTracker, isSignedIn }) {
         <nav className="mx-auto flex h-[68px] max-w-7xl items-center justify-between px-5 sm:px-8">
           <a href="#home" className="flex items-center gap-2.5 font-bold tracking-tight">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950 text-sm text-white">NK.</span>
-            <span>Narender Katta<span className="text-blue-600">.</span></span>
+            <span>Katta Narender Naidu<span className="text-blue-600">.</span></span>
           </a>
           <div className="hidden items-center gap-8 text-sm font-medium text-slate-600 sm:flex">
             <a className="transition hover:text-blue-700" href="#work">Work</a>
