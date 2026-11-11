@@ -216,55 +216,65 @@ function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
     }
   };
 
-  // Open Notes
+  // Open Notes — notes are shared across ALL users (generated once per topic).
   const handleOpenNotes = async (topic) => {
     setActiveNotesTopic(topic);
     try {
-      let cached = topic.notes_markdown || '';
-      if (!cached) {
-        const { data, error } = await supabase
+      // 1. Shared cache: has anyone already generated notes for this topic?
+      const { data: shared, error: sharedError } = await supabase
+        .from('topic_notes')
+        .select('payload')
+        .eq('topic_id', topic.id)
+        .maybeSingle();
+      if (sharedError) throw sharedError;
+
+      if (shared?.payload) {
+        setNotesContent(shared.payload);
+        return;
+      }
+
+      // 2. Seed the shared cache from pre-existing per-user / legacy notes (no regeneration).
+      let content = topic.notes_markdown || '';
+      if (!content) {
+        const { data: mine, error: mineError } = await supabase
           .from('user_app_data')
           .select('payload')
           .eq('user_id', user.id)
           .eq('data_key', `notes_${topic.id}`)
           .maybeSingle();
-        if (error) throw error;
-        cached = data?.payload || '';
+        if (mineError) throw mineError;
+        content = mine?.payload || '';
       }
-
-      if (!cached) {
+      if (!content) {
         const legacyKeys = [
           getUserStorageKey(user.id, `study_notes_${topic.id}`),
           ...(isLegacyOwner(user.email) ? [`study_notes_${topic.id}`] : [])
         ];
         const legacy = readLegacyUserData(legacyKeys);
         if (legacy.found) {
-          cached = legacy.value;
-          const { error } = await supabase.from('user_app_data').upsert({
-            user_id: user.id,
-            data_key: `notes_${topic.id}`,
-            payload: cached
-          }, { onConflict: 'user_id,data_key' });
-          if (error) throw error;
+          content = legacy.value;
           localStorage.removeItem(legacy.sourceKey);
         }
       }
 
-      if (cached) {
-        setNotesContent(cached);
-        return;
+      // 3. Nothing anywhere -> generate once with Gemini.
+      if (!content) {
+        setGeneratingNotes(true);
+        setNotesContent('');
+        content = await generateStudyNotes(topic);
       }
 
-      setGeneratingNotes(true);
-      setNotesContent('');
-      const generated = await generateStudyNotes(topic);
-      setNotesContent(generated);
-      const { error } = await supabase.from('user_app_data').upsert({
-        user_id: user.id,
-        data_key: `notes_${topic.id}`,
-        payload: generated
-      }, { onConflict: 'user_id,data_key' });
-      if (error) throw error;
+      setNotesContent(content);
+
+      // Publish to the shared cache so every other user reuses it.
+      // ignoreDuplicates => first write wins if two users race on the same topic.
+      const { error: saveError } = await supabase
+        .from('topic_notes')
+        .upsert(
+          { topic_id: topic.id, payload: content, created_by: user.id },
+          { onConflict: 'topic_id', ignoreDuplicates: true }
+        );
+      if (saveError) throw saveError;
     } catch (err) {
       alert('Error loading or saving notes: ' + err.message);
     } finally {
