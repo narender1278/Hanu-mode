@@ -1,0 +1,6 @@
+langchain-google-genai>=4.0.0
+langchain-chroma
+langchain-text-splitters
+langchain-core
+python-dotenv
+pypdf

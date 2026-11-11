@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono&display=swap">
+    <style>
+      body {
+        font-family: 'Google Sans', Arial, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background-color: #f8f9fa;
+        color: #202124;
+      }
+      .header {
+        border-bottom: 2px solid #e8eaed;
+        padding-bottom: 12px;
+        margin-bottom: 16px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+      }
+      .badge-quiz { background-color: #e8f0fe; color: #1a73e8; }
+      .badge-rev { background-color: #fef7e0; color: #b06000; }
+      h2 {
+        font-size: 16px;
+        margin: 0 0 6px 0;
+        color: #1a73e8;
+      }
+      .topic-name {
+        font-size: 13px;
+        color: #5f6368;
+        line-height: 1.4;
+      }
+      #loader {
+        text-align: center;
+        padding: 40px 10px;
+        color: #5f6368;
+      }
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #1a73e8;
+        border-radius: 50%;
+        width: 32px;
+        height: 32px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 12px auto;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .q-card {
+        background: white;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid #dadce0;
+      }
+      .q-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        line-height: 1.4;
+      }
+      pre {
+        background: #f1f3f4;
+        padding: 8px;
+        border-radius: 4px;
+        font-family: 'Roboto Mono', monospace;
+        font-size: 11px;
+        overflow-x: auto;
+      }
+      .option-item {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1.3;
+        padding: 6px 8px;
+        border-radius: 4px;
+        transition: background 0.15s;
+      }
+      .option-item:hover {
+        background: #f1f3f4;
+      }
+      .option-item input {
+        margin-right: 8px;
+        margin-top: 2px;
+      }
+      .feedback-box {
+        margin-top: 10px;
+        padding: 8px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        line-height: 1.4;
+        display: none;
+      }
+      .feedback-correct {
+        background: #e6f4ea;
+        color: #137333;
+        border: 1px solid #ceead6;
+      }
+      .feedback-wrong {
+        background: #fce8e6;
+        color: #c5221f;
+        border: 1px solid #fad2cf;
+      }
+      .btn {
+        width: 100%;
+        padding: 10px;
+        background: #1a73e8;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .btn:hover {
+        background: #1557b0;
+      }
+      .btn:disabled {
+        background: #dadce0;
+        cursor: not-allowed;
+      }
+      #score-summary {
+        display: none;
+        text-align: center;
+        background: white;
+        padding: 16px;
+        border-radius: 8px;
+        margin-top: 14px;
+        border: 1px solid #34a853;
+      }
+      .score-num {
+        font-size: 24px;
+        font-weight: 700;
+        color: #137333;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <span class="badge <?= isRevision ? 'badge-rev' : 'badge-quiz' ?>">
+        <?= isRevision ? '🔄 Spaced Revision (Rev #' + (revCount + 1) + ')' : '❓ Initial Topic Quiz' ?>
+      </span>
+      <h2><?= topicId ?></h2>
+      <div class="topic-name"><?= topic ?></div>
+    </div>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      <div id="loader-text">Gemini is preparing your questions...</div>
+    </div>
+
+    <div id="quiz-container" style="display:none;"></div>
+
+    <button id="submit-btn" class="btn" style="display:none;" onclick="evaluateAnswers()">
+      Submit & Check Answers
+    </button>
+
+    <div id="score-summary">
+      <div class="score-num" id="score-text">0 / 0</div>
+      <p id="score-msg" style="margin: 8px 0; font-size: 13px; font-weight: 500;"></p>
+      <div id="save-status" style="font-size: 12px; color: #188038; font-weight: 600;"></div>
+    </div>
+
+    <script>
+      const row = <?= row ?>;
+      const topicId = "<?= topicId ?>";
+      const topic = "<?= topic ?>";
+      const section = "<?= section ?>";
+      const isRevision = <?= isRevision ? 'true' : 'false' ?>;
+
+      let questionsData = [];
+
+      window.onload = function() {
+        google.script.run
+          .withSuccessHandler(onQuestionsLoaded)
+          .withFailureHandler(onError)
+          .fetchQuizQuestions(topicId, topic, section, isRevision);
+      };
+
+      function onQuestionsLoaded(data) {
+        document.getElementById('loader').style.display = 'none';
+        if (!data || !data.questions || data.questions.length === 0) {
+          document.getElementById('quiz-container').innerHTML = "<p>Failed to generate questions. Please try again.</p>";
+          document.getElementById('quiz-container').style.display = 'block';
+          return;
+        }
+
+        questionsData = data.questions;
+        const container = document.getElementById('quiz-container');
+        container.innerHTML = '';
+
+        questionsData.forEach((q, qIndex) => {
+          const card = document.createElement('div');
+          card.className = 'q-card';
+          card.id = `card-${qIndex}`;
+
+          let optionsHtml = '';
+          q.options.forEach((opt, optIndex) => {
+            optionsHtml += `
+              <label class="option-item" id="opt-label-${qIndex}-${optIndex}">
+                <input type="radio" name="q-${qIndex}" value="${optIndex}">
+                <span>${opt}</span>
+              </label>
+            `;
+          });
+
+          card.innerHTML = `
+            <div class="q-title">${qIndex + 1}. ${escapeHtml(q.question)}</div>
+            ${optionsHtml}
+            <div class="feedback-box" id="feedback-${qIndex}"></div>
+          `;
+          container.appendChild(card);
+        });
+
+        container.style.display = 'block';
+        document.getElementById('submit-btn').style.display = 'block';
+      }
+
+      function evaluateAnswers() {
+        let score = 0;
+        let allAnswered = true;
+
+        for (let i = 0; i < questionsData.length; i++) {
+          const selected = document.querySelector(`input[name="q-${i}"]:checked`);
+          if (!selected) {
+            allAnswered = false;
+          }
+        }
+
+        if (!allAnswered) {
+          alert("Please answer all questions before submitting.");
+          return;
+        }
+
+        document.getElementById('submit-btn').disabled = true;
+
+        questionsData.forEach((q, i) => {
+          const selected = document.querySelector(`input[name="q-${i}"]:checked`);
+          const userVal = parseInt(selected.value);
+          const feedback = document.getElementById(`feedback-${i}`);
+
+          if (userVal === q.correctIndex) {
+            score++;
+            feedback.className = "feedback-box feedback-correct";
+            feedback.innerHTML = `<b>✅ Correct!</b> ${escapeHtml(q.explanation)}`;
+          } else {
+            feedback.className = "feedback-box feedback-wrong";
+            feedback.innerHTML = `<b>❌ Incorrect.</b> Correct answer: ${escapeHtml(q.options[q.correctIndex])}<br><span style="margin-top:4px;display:block;">${escapeHtml(q.explanation)}</span>`;
+          }
+          feedback.style.display = 'block';
+        });
+
+        const total = questionsData.length;
+        const scoreBox = document.getElementById('score-summary');
+        document.getElementById('score-text').innerText = `${score} / ${total}`;
+        
+        const passed = score >= Math.ceil(total * 0.6);
+        const msgEl = document.getElementById('score-msg');
+        
+        if (passed) {
+          msgEl.innerText = "🎉 Passed! Updating your spreadsheet...";
+          msgEl.style.color = "#137333";
+          
+          google.script.run
+            .withSuccessHandler(function(res) {
+              document.getElementById('save-status').innerText = "✅ Spreadsheet updated! (Status, dates & revisions saved)";
+            })
+            .withFailureHandler(onError)
+            .submitQuizResults(row, isRevision, score, total);
+        } else {
+          msgEl.innerText = "⚠️ Review your notes and try again!";
+          msgEl.style.color = "#c5221f";
+          document.getElementById('submit-btn').disabled = false;
+          document.getElementById('submit-btn').innerText = "Retake Quiz";
+        }
+
+        scoreBox.style.display = 'block';
+      }
+
+      function onError(error) {
+        document.getElementById('loader').style.display = 'none';
+        alert("Error: " + (error.message || error));
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.innerText = text;
+        return div.innerHTML;
+      }
+    </script>
+  </body>
+</html>

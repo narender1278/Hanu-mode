@@ -1,0 +1,18 @@
+# Python / backend
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+db.sqlite3
+*.log
+# supabase_schema.sql
+# Node / frontend
+node_modules/
+frontend/node_modules/
+dist/
+build/
+.env.local
+.env
+# seed_supabase.py
+chroma_db
