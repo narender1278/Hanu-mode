@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,24 +21,35 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+def get_setting(name: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    try:
+        return st.secrets.get(name, "")
+    except StreamlitSecretNotFoundError:
+        return ""
+
+
+GEMINI_API_KEY = get_setting("GOOGLE_API_KEY")
+SUPABASE_URL = get_setting("SUPABASE_URL")
+SUPABASE_KEY = get_setting("SUPABASE_ANON_KEY") or get_setting("SUPABASE_KEY")
 GEMINI_MODEL = "gemini-3.8-flash"
 
 if not GEMINI_API_KEY:
-    st.error("⚠️ Missing GOOGLE_API_KEY in your .env file!")
+    st.error("⚠️ Missing GOOGLE_API_KEY in your environment or Streamlit secrets.")
     st.stop()
 
 # Initialize Supabase client
-@st.cache_resource
 def get_supabase_client():
     if not SUPABASE_URL or not SUPABASE_KEY:
         return None
     from supabase import create_client
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-supabase = get_supabase_client()
+if "supabase_client" not in st.session_state:
+    st.session_state.supabase_client = get_supabase_client()
+supabase = st.session_state.supabase_client
 
 # Initialize Gemini client
 @st.cache_resource
@@ -180,32 +192,83 @@ def save_quiz_result(user_id: str, topic_id: str, score: int, total: int, is_rev
     }).execute()
 
 
-# ---- USER PROFILE / SIDEBAR -------------------------------------------------
+# ---- AUTHENTICATION ---------------------------------------------------------
+if not supabase:
+    st.error("Supabase credentials are missing. Add SUPABASE_URL and SUPABASE_ANON_KEY to Streamlit secrets.")
+    st.stop()
+
 with st.sidebar:
     st.title("🚀 Study Companion")
     st.markdown("Python Mastery & Spaced Repetition")
 
-    # User Profile Switcher
-    if "current_user" not in st.session_state:
-        st.session_state.current_user = "Narender"
+session_user = None
+if "supabase_session" in st.session_state:
+    saved_session = st.session_state.supabase_session
+    try:
+        auth_response = supabase.auth.set_session(
+            saved_session["access_token"],
+            saved_session["refresh_token"]
+        )
+        session_user = auth_response.user
+        if auth_response.session:
+            st.session_state.supabase_session = {
+                "access_token": auth_response.session.access_token,
+                "refresh_token": auth_response.session.refresh_token
+            }
+    except Exception as error:
+        st.session_state.pop("supabase_session", None)
+        st.sidebar.warning(f"Your session expired. Please sign in again. ({error})")
 
-    # Fetch users from profiles table if supabase connected
-    all_users = ["Narender", "Friend 1", "Friend 2"]
-    if supabase:
-        try:
-            profiles = supabase.table("profiles").select("display_name").execute()
-            if profiles.data:
-                all_users = list(set([p["display_name"] for p in profiles.data if p.get("display_name")]))
-        except Exception:
-            pass
+if session_user is None:
+    with st.sidebar:
+        auth_mode = st.radio("Account", ["Sign in", "Create account"])
+        with st.form("auth_form"):
+            display_name = ""
+            if auth_mode == "Create account":
+                display_name = st.text_input("Name")
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button(auth_mode)
 
-    selected_user = st.selectbox("👤 Select User Profile", options=all_users, index=0)
-    st.session_state.current_user = selected_user
+        if submitted:
+            try:
+                if auth_mode == "Create account":
+                    response = supabase.auth.sign_up({
+                        "email": email,
+                        "password": password,
+                        "options": {"data": {"full_name": display_name.strip()}}
+                    })
+                    if response.session:
+                        session = response.session
+                    else:
+                        st.success("Account created. Check your email to confirm it, then sign in.")
+                        session = None
+                else:
+                    response = supabase.auth.sign_in_with_password({
+                        "email": email,
+                        "password": password
+                    })
+                    session = response.session
 
-    new_user = st.text_input("➕ Or Add a Friend's Name:")
-    if st.button("Add Friend") and new_user.strip():
-        st.session_state.current_user = new_user.strip()
-        st.success(f"Switched profile to: {new_user.strip()}")
+                if session:
+                    st.session_state.supabase_session = {
+                        "access_token": session.access_token,
+                        "refresh_token": session.refresh_token
+                    }
+                    st.rerun()
+            except Exception as error:
+                st.error(f"Authentication failed: {error}")
+    st.stop()
+
+current_user_id = str(session_user.id)
+user_metadata = getattr(session_user, "user_metadata", None) or {}
+current_user_name = user_metadata.get("full_name") or session_user.email or "Account"
+
+with st.sidebar:
+    st.write(f"Signed in as **{current_user_name}**")
+    if st.button("Sign out"):
+        supabase.auth.sign_out()
+        st.session_state.pop("supabase_session", None)
         st.rerun()
 
     st.divider()
@@ -217,9 +280,9 @@ with st.sidebar:
 
 
 # ---- MAIN DASHBOARD ---------------------------------------------------------
-st.header(f"Study Dashboard for: `{st.session_state.current_user}`")
+st.header(f"Study Dashboard for: `{current_user_name}`")
 
-topics, prog_map = load_curriculum_and_progress(st.session_state.current_user)
+topics, prog_map = load_curriculum_and_progress(current_user_id)
 
 # Metrics calculation
 today = datetime.date.today()
@@ -355,6 +418,6 @@ for topic, progress, is_due in filtered_topics:
                         if passed:
                             st.balloons()
                             st.success(f"🎉 Passed with {score}/{total}! Progress saved.")
-                            save_quiz_result(st.session_state.current_user, t_id, score, total, is_rev)
+                            save_quiz_result(current_user_id, t_id, score, total, is_rev)
                         else:
                             st.warning(f"Score: {score}/{total}. Review notes and try again!")
