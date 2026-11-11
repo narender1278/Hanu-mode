@@ -112,6 +112,9 @@ function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
   const [generatingNotes, setGeneratingNotes] = useState(false);
   const [notesContent, setNotesContent] = useState('');
   const [copiedNotes, setCopiedNotes] = useState(false);
+  const [notesExtra, setNotesExtra] = useState('');        // this user's private additions
+  const [notesExtraDraft, setNotesExtraDraft] = useState(''); // textarea input
+  const [savingExtra, setSavingExtra] = useState(false);
 
   // Quiz state
   const [quizQuestions, setQuizQuestions] = useState(null);
@@ -219,7 +222,18 @@ function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
   // Open Notes — notes are shared across ALL users (generated once per topic).
   const handleOpenNotes = async (topic) => {
     setActiveNotesTopic(topic);
+    setNotesExtra('');
+    setNotesExtraDraft('');
     try {
+      // 0. Load THIS user's private additions (Option A: per-user, never shared).
+      const { data: extraRow, error: extraError } = await supabase
+        .from('user_app_data')
+        .select('payload')
+        .eq('user_id', user.id)
+        .eq('data_key', `notes_extra_${topic.id}`)
+        .maybeSingle();
+      if (!extraError && extraRow?.payload) setNotesExtra(extraRow.payload);
+
       // 1. Shared cache: has anyone already generated notes for this topic?
       const { data: shared, error: sharedError } = await supabase
         .from('topic_notes')
@@ -282,9 +296,36 @@ function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
     }
   };
 
+  // Shared notes + this user's private additions, combined for display/copy/download.
+  const composeNotes = () =>
+    notesContent + (notesExtra ? `\n\n## 📝 My Notes\n\n${notesExtra}` : '');
+
+  // Append the textarea draft to this user's private additions and persist it.
+  const handleIncludeNotes = async () => {
+    const addition = notesExtraDraft.trim();
+    if (!addition || !activeNotesTopic) return;
+    const nextExtra = notesExtra ? `${notesExtra}\n\n${addition}` : addition;
+    setSavingExtra(true);
+    try {
+      const { error } = await supabase.from('user_app_data').upsert({
+        user_id: user.id,
+        data_key: `notes_extra_${activeNotesTopic.id}`,
+        payload: nextExtra
+      }, { onConflict: 'user_id,data_key' });
+      if (error) throw error;
+      setNotesExtra(nextExtra);
+      setNotesExtraDraft('');
+    } catch (err) {
+      alert('Could not save your notes: ' + err.message);
+    } finally {
+      setSavingExtra(false);
+    }
+  };
+
   const handleCopyNotes = () => {
-    if (notesContent) {
-      navigator.clipboard.writeText(notesContent);
+    const full = composeNotes();
+    if (full) {
+      navigator.clipboard.writeText(full);
       setCopiedNotes(true);
       setTimeout(() => setCopiedNotes(false), 2000);
     }
@@ -292,7 +333,7 @@ function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
 
   const handleDownloadNotes = () => {
     if (notesContent && activeNotesTopic) {
-      const blob = new Blob([notesContent], { type: 'text/markdown;charset=utf-8;' });
+      const blob = new Blob([composeNotes()], { type: 'text/markdown;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -978,8 +1019,35 @@ function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
                     )
                   }}
                 >
-                  {notesContent}
+                  {composeNotes()}
                 </ReactMarkdown>
+              )}
+
+              {!generatingNotes && notesContent && (
+                <div className="mt-6 pt-5 border-t border-dashed border-slate-300">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                    <span>📝</span>
+                    <span>Add your own notes</span>
+                    <span className="font-normal text-slate-400">(private to you · Markdown supported)</span>
+                  </label>
+                  <textarea
+                    value={notesExtraDraft}
+                    onChange={(e) => setNotesExtraDraft(e.target.value)}
+                    placeholder="Add extra points, examples, reminders..."
+                    rows={4}
+                    className="w-full text-sm border border-slate-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y font-mono"
+                  />
+                  <div className="flex justify-end mt-2">
+                    <button
+                      onClick={handleIncludeNotes}
+                      disabled={!notesExtraDraft.trim() || savingExtra}
+                      className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold text-xs px-4 py-2 rounded-lg transition"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      <span>{savingExtra ? 'Saving...' : 'Include'}</span>
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
