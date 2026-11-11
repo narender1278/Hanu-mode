@@ -17,6 +17,7 @@ import {
   CalendarCheck,
   CheckSquare,
   DollarSign,
+  FileText,
   PlusCircle,
   ExternalLink,
   ChevronDown
@@ -29,7 +30,9 @@ import { NEETCODE_TOPICS } from './curriculumNeetcode';
 import HabitTracker from './components/HabitTracker';
 import TodoTracker from './components/TodoTracker';
 import ExpensesView from './components/ExpensesView';
+import ResumeView from './components/ResumeView';
 import AuthPage from './AuthPage';
+import PortfolioPage from './PortfolioPage';
 import useSupabaseUserData from './useSupabaseUserData';
 import { getUserStorageKey, isLegacyOwner, readLegacyUserData } from './userStorage';
 
@@ -40,7 +43,7 @@ const INITIAL_ROADMAPS = {
   'neetcode': { id: 'neetcode', name: '💻 NeetCode 150 / DSA', topics: NEETCODE_TOPICS },
 };
 
-function StudyApp({ user, onSignOut, signOutError }) {
+function StudyApp({ user, onSignOut, signOutError, onBackToPortfolio }) {
   // Top Navigation View: 'roadmaps' | 'habits' | 'todos' | 'expenses'
   const [activeTab, setActiveTab] = useState('roadmaps');
 
@@ -399,6 +402,13 @@ function StudyApp({ user, onSignOut, signOutError }) {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onBackToPortfolio}
+              className="hidden rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 sm:inline-flex"
+            >
+              Portfolio
+            </button>
             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
               <Sparkles className="w-5 h-5" />
             </div>
@@ -431,6 +441,13 @@ function StudyApp({ user, onSignOut, signOutError }) {
 
         {/* PRIMARY VIEW NAVIGATION TABS */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-1 overflow-x-auto border-t border-slate-100 text-xs font-semibold">
+          <button
+            type="button"
+            onClick={onBackToPortfolio}
+            className="py-3 px-4 border-b-2 border-transparent whitespace-nowrap text-slate-500 transition hover:text-slate-800"
+          >
+            Portfolio
+          </button>
           <button
             onClick={() => setActiveTab('roadmaps')}
             className={`py-3 px-4 border-b-2 flex items-center gap-2 whitespace-nowrap transition ${
@@ -478,6 +495,19 @@ function StudyApp({ user, onSignOut, signOutError }) {
             <DollarSign className="w-4 h-4" />
             <span>Monthly Expenses</span>
           </button>
+          {isLegacyOwner(user.email) && (
+            <button
+              onClick={() => setActiveTab('resume')}
+              className={`py-3 px-4 border-b-2 flex items-center gap-2 whitespace-nowrap transition ${
+                activeTab === 'resume'
+                  ? 'border-blue-600 text-blue-600 font-bold'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>My Resume</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -732,6 +762,9 @@ function StudyApp({ user, onSignOut, signOutError }) {
         {/* VIEW 4: MONTHLY EXPENSES */}
         {activeTab === 'expenses' && (
           <ExpensesView key={user.id} userId={user.id} />
+        )}
+        {activeTab === 'resume' && isLegacyOwner(user.email) && (
+          <ResumeView key={user.id} userId={user.id} />
         )}
 
       </main>
@@ -1082,6 +1115,36 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
   const [signOutError, setSignOutError] = useState('');
+  const [currentPage, setCurrentPage] = useState(() => {
+    if (typeof window === 'undefined') return 'portfolio';
+    const page = window.location.hash.slice(1);
+    return page === 'tracker' || page === 'login' ? page : 'portfolio';
+  });
+
+  const navigateTo = (page) => {
+    setCurrentPage(page);
+    if (typeof window !== 'undefined') {
+      window.location.hash = page === 'portfolio' ? 'home' : page;
+    }
+  };
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const page = window.location.hash.slice(1);
+      setCurrentPage(page === 'tracker' || page === 'login' ? page : 'portfolio');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!session && currentPage === 'tracker') {
+      navigateTo('login');
+    } else if (session && currentPage === 'login') {
+      navigateTo('tracker');
+    }
+  }, [authLoading, currentPage, session]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -1090,11 +1153,18 @@ export default function App() {
     }
 
     let active = true;
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (active) {
         setSession(nextSession);
         setAuthError('');
         setSignOutError('');
+        if (event === 'SIGNED_IN') {
+          setCurrentPage('tracker');
+          window.location.hash = 'tracker';
+        } else if (event === 'SIGNED_OUT') {
+          setCurrentPage('portfolio');
+          window.location.hash = 'home';
+        }
       }
     });
 
@@ -1120,13 +1190,23 @@ export default function App() {
   const handleSignOut = async () => {
     try {
       const { error } = await supabase.auth.signOut();
-      if (error) setSignOutError(error.message);
+      if (error) {
+        setSignOutError(error.message);
+      } else {
+        navigateTo('portfolio');
+      }
     } catch (error) {
       setSignOutError(error.message || 'An unexpected error occurred.');
     }
   };
 
-  if (!isSupabaseConfigured) return <AuthPage />;
+  const handleGoToTracker = () => {
+    navigateTo(session ? 'tracker' : 'login');
+  };
+
+  if (currentPage === 'portfolio') {
+    return <PortfolioPage onGoToTracker={handleGoToTracker} isSignedIn={Boolean(session)} />;
+  }
 
   if (authLoading) {
     return (
@@ -1136,7 +1216,14 @@ export default function App() {
     );
   }
 
-  if (!session) return <AuthPage initialError={authError} />;
+  if (!session) {
+    return (
+      <AuthPage
+        initialError={authError}
+        onBackToPortfolio={() => navigateTo('portfolio')}
+      />
+    );
+  }
 
   return (
     <StudyApp
@@ -1144,6 +1231,7 @@ export default function App() {
       user={session.user}
       onSignOut={handleSignOut}
       signOutError={signOutError}
+      onBackToPortfolio={() => navigateTo('portfolio')}
     />
   );
 }

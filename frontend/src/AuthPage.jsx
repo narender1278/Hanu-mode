@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowRight, BookOpen, LoaderCircle } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
 
-export default function AuthPage({ initialError = '' }) {
+export default function AuthPage({ initialError = '', onBackToPortfolio }) {
   const [mode, setMode] = useState('sign-in');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -24,7 +24,10 @@ export default function AuthPage({ initialError = '' }) {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { full_name: name.trim() } }
+          options: {
+            data: { full_name: name.trim() },
+            emailRedirectTo: window.location.origin
+          }
         });
         if (signUpError) throw signUpError;
         if (!data.session) {
@@ -47,6 +50,15 @@ export default function AuthPage({ initialError = '' }) {
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-10 flex items-center justify-center">
       <div className="w-full max-w-md">
+        {onBackToPortfolio && (
+          <button
+            type="button"
+            onClick={onBackToPortfolio}
+            className="mb-5 text-sm font-medium text-slate-400 transition hover:text-white"
+          >
+            ← Back to portfolio
+          </button>
+        )}
         <div className="text-center mb-8">
           <div className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-blue-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/25">
             <BookOpen className="w-7 h-7" />

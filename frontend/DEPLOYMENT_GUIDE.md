@@ -49,6 +49,14 @@ Vercel is the most popular hosting platform for React and Supabase apps.
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: *(your Supabase publishable key)*
 6. Click **Deploy**. In ~30 seconds, you get a free `https://<your-app>.vercel.app` link.
 
+### Public portfolio and private tracker
+
+The site root is the public portfolio and can be shared with anyone. The **Go to tracker** button opens the sign-in/create-account page for signed-out visitors, and the tracker itself is shown only after Supabase authenticates the visitor. A direct `#tracker` link also redirects signed-out visitors to sign-in; signed-in visitors opening `#login` are sent to the tracker. Use the root URL when sharing the portfolio.
+
+In Supabase, open **Authentication → URL Configuration** and set **Site URL** to your deployed public site URL (for example, `https://your-app.vercel.app`). Add that same URL to **Redirect URLs**. Email confirmation links return to the site root; users can then sign in to reach the tracker.
+
+Tracker visibility is a frontend navigation rule, not the data security boundary. Keep the Supabase Row Level Security policies enabled: they ensure each authenticated user can only access their own tracker rows.
+
 ### Private expense tracker setup
 
 Run `supabase_expenses_schema.sql` in the Supabase SQL Editor to create the expense table and enable per-user row-level security. Each signed-in account can only read and change its own rows. Other accounts start with an empty tracker and can add their own categories.
@@ -58,6 +66,8 @@ If you are migrating the original tracker for `kattanarender167@gmail.com`, run 
 ### Synchronized habits, todos, roadmaps, and study progress
 
 Run `supabase_user_data_schema.sql` in the Supabase SQL Editor. It creates a private per-user JSON data table with row-level security and enables Realtime updates. Habits, habit checks, todos, imported roadmaps, the selected roadmap, study progress, and generated notes then sync through Supabase across devices signed into the same account. Existing browser-only values are migrated to Supabase on the original account's next sign-in; other users start with their own data.
+
+The private resume editor is shown only to `kattanarender167@gmail.com`. After running the user-data schema, run the local, Git-ignored `supabase_resume_seed.private.sql` once to load the starting HTML into that account. The HTML is stored in the account's Supabase row, not shipped in the public frontend bundle. Do not commit or share the private seed file.
 
 Do not put a private Gemini API key in a `VITE_` or `NEXT_PUBLIC_` frontend variable; those values are visible to website visitors. Use a server-side function for Gemini requests.
 
